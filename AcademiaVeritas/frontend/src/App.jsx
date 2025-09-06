@@ -1,18 +1,21 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
-import VerificationDemo from './components/VerificationDemo';
-import InstitutionPortal from './components/InstitutionPortal';
+import LandingPage from './pages/LandingPage';
+import VerifierPage from './pages/VerifierPage';
+import PortalPage from './pages/PortalPage';
 
 function App() {
-  const [activeView, setActiveView] = useState('verifier'); // 'verifier' or 'portal'
-
   return (
-    <div className="bg-gray-50 min-h-screen">
-      <Navbar activeView={activeView} setActiveView={setActiveView} />
-      <main className="pt-24 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {activeView === 'verifier' ? <VerificationDemo /> : <InstitutionPortal />}
-      </main>
-    </div>
+    <Router>
+      <div className="min-h-screen bg-light">
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/verify" element={<VerifierPage />} />
+          <Route path="/portal" element={<PortalPage />} />
+        </Routes>
+      </div>
+    </Router>
   );
 }
 
