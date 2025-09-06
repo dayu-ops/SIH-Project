@@ -405,9 +405,8 @@ def google_callback_institution():
             'iat': datetime.datetime.utcnow()
         }
         token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
-        # Redirect to frontend with token in URL
         frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-        redirect_url = f"{frontend_url}/google-auth?token={token}"
+        redirect_url = f"{frontend_url}/google-auth-callback?token={token}"
         return redirect(redirect_url)
     except Exception as e:
         print(f"Error in Google institution callback: {e}")
@@ -449,9 +448,8 @@ def google_callback_verifier():
             'iat': datetime.datetime.utcnow()
         }
         token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
-        # Redirect to frontend with token in URL
         frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-        redirect_url = f"{frontend_url}/google-auth?token={token}"
+        redirect_url = f"{frontend_url}/google-auth-callback?token={token}"
         return redirect(redirect_url)
     except Exception as e:
         print(f"Error in Google verifier callback: {e}")

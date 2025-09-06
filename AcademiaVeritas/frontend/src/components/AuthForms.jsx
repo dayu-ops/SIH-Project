@@ -38,6 +38,16 @@ const AuthForms = ({ userType }) => {
   
   const inputStyles = "w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors";
 
+  // Google login handler
+  const handleGoogleLogin = () => {
+    const backendBase = 'http://localhost:5001';
+    if (userType === 'institution') {
+      window.location.href = `${backendBase}/api/institution/google`;
+    } else {
+      window.location.href = `${backendBase}/api/verifier/google`;
+    }
+  };
+
   return (
     <div className="card max-w-md mx-auto">
       {/* Tab Navigation */}
@@ -63,7 +73,19 @@ const AuthForms = ({ userType }) => {
           Register
         </button>
       </div>
-      
+
+      {/* Google Login Button (only on Login tab) */}
+      {activeTab === 'login' && (
+        <button
+          type="button"
+          onClick={handleGoogleLogin}
+          className="w-full flex items-center justify-center gap-2 mb-6 py-3 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 transition-colors shadow-sm font-medium text-gray-700"
+        >
+          <img src="https://developers.google.com/identity/images/g-logo.png" alt="Google" className="w-5 h-5" />
+          Login with Google
+        </button>
+      )}
+
       {/* Message Display */}
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-accent-50 text-accent-700 border border-accent-200">
@@ -75,7 +97,7 @@ const AuthForms = ({ userType }) => {
           {success}
         </div>
       )}
-      
+
       <form onSubmit={handleSubmit} className="space-y-6">
         {activeTab === 'register' && (
           <div>
@@ -93,7 +115,7 @@ const AuthForms = ({ userType }) => {
             />
           </div>
         )}
-        
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Email Address
@@ -108,7 +130,7 @@ const AuthForms = ({ userType }) => {
             required
           />
         </div>
-        
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Password
@@ -123,7 +145,7 @@ const AuthForms = ({ userType }) => {
             required
           />
         </div>
-        
+
         <button
           type="submit"
           disabled={isLoading}
@@ -137,3 +159,4 @@ const AuthForms = ({ userType }) => {
 };
 
 export default AuthForms;
+
