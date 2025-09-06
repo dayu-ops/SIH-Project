@@ -23,82 +23,92 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'pdf'}
 cert_bp = Blueprint('certificate', __name__)
 
 
-def token_required(f):
+def token_required(allowed_user_types=None):
     """
-    Custom JWT decorator for route protection.
+    Custom JWT decorator for route protection with role-based access control.
     
-    This decorator validates JWT tokens from the Authorization header and extracts
-    the institution_id for use in protected routes. It ensures that only authenticated
-    institutions can access secure endpoints.
+    This decorator validates JWT tokens from the Authorization header and checks
+    if the user type is in the allowed list. It ensures that only authenticated
+    users with appropriate roles can access protected endpoints.
     
     Args:
-        f: The route function to be decorated
+        allowed_user_types (list): List of allowed user types (e.g., ['institution', 'verifier'])
         
     Returns:
-        Decorated function that validates JWT tokens before execution
+        Decorated function that validates JWT tokens and user roles before execution
         
     Raises:
         401 Unauthorized: If token is missing, invalid, or expired
+        403 Forbidden: If user type is not in allowed list
     """
-    @functools.wraps(f)
-    def decorated(*args, **kwargs):
-        # Check for Authorization header
-        auth_header = request.headers.get('Authorization')
-        
-        if not auth_header:
-            return jsonify({
-                "error": "Authorization header is missing"
-            }), 401
-        
-        # Validate Bearer token format
-        try:
-            auth_type, token = auth_header.split(' ', 1)
-            if auth_type.lower() != 'bearer':
-                return jsonify({
-                    "error": "Invalid authorization type. Use 'Bearer <token>'"
-                }), 401
-        except ValueError:
-            return jsonify({
-                "error": "Invalid authorization header format. Use 'Bearer <token>'"
-            }), 401
-        
-        # Validate SECRET_KEY availability
-        if not SECRET_KEY:
-            print("Error: SECRET_KEY environment variable is not set")
-            return jsonify({
-                "error": "Server configuration error"
-            }), 500
-        
-        try:
-            # Decode and validate the JWT token
-            payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-            current_institution_id = payload.get('institution_id')
+    def decorator(f):
+        @functools.wraps(f)
+        def decorated(*args, **kwargs):
+            # Check for Authorization header
+            auth_header = request.headers.get('Authorization')
             
-            if not current_institution_id:
+            if not auth_header:
                 return jsonify({
-                    "error": "Invalid token payload"
+                    "error": "Authorization header is missing"
                 }), 401
             
-            # Pass the institution_id to the decorated function
-            return f(current_institution_id, *args, **kwargs)
+            # Validate Bearer token format
+            try:
+                auth_type, token = auth_header.split(' ', 1)
+                if auth_type.lower() != 'bearer':
+                    return jsonify({
+                        "error": "Invalid authorization type. Use 'Bearer <token>'"
+                    }), 401
+            except ValueError:
+                return jsonify({
+                    "error": "Invalid authorization header format. Use 'Bearer <token>'"
+                }), 401
             
-        except jwt.ExpiredSignatureError:
-            return jsonify({
-                "error": "Token has expired"
-            }), 401
+            # Validate SECRET_KEY availability
+            if not SECRET_KEY:
+                print("Error: SECRET_KEY environment variable is not set")
+                return jsonify({
+                    "error": "Server configuration error"
+                }), 500
             
-        except jwt.InvalidTokenError:
-            return jsonify({
-                "error": "Invalid token"
-            }), 401
-            
-        except Exception as e:
-            print(f"Unexpected error during token validation: {e}")
-            return jsonify({
-                "error": "Token validation failed"
-            }), 401
-    
-    return decorated
+            try:
+                # Decode and validate the JWT token
+                payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+                user_id = payload.get('user_id')
+                user_type = payload.get('user_type')
+                
+                if not user_id or not user_type:
+                    return jsonify({
+                        "error": "Invalid token payload"
+                    }), 401
+                
+                # Check if user type is allowed
+                if allowed_user_types and user_type not in allowed_user_types:
+                    return jsonify({
+                        "error": f"Access denied. Required user types: {', '.join(allowed_user_types)}"
+                    }), 403
+                
+                # Pass the user_id and user_type to the decorated function
+                return f(user_id, user_type, *args, **kwargs)
+                
+            except jwt.ExpiredSignatureError:
+                return jsonify({
+                    "error": "Token has expired"
+                }), 401
+                
+            except jwt.InvalidTokenError:
+                return jsonify({
+                    "error": "Invalid token"
+                }), 401
+                
+            except Exception as e:
+                print(f"Unexpected error during token validation: {e}")
+                return jsonify({
+                    "error": "Token validation failed"
+                }), 401
+        
+        return decorated
+    return decorator
 
 
 def allowed_file(filename):
@@ -116,8 +126,8 @@ def allowed_file(filename):
 
 
 @cert_bp.route('/api/certificate/add', methods=['POST'])
-@token_required
-def add_certificate(current_institution_id):
+@token_required(allowed_user_types=['institution'])
+def add_certificate(user_id, user_type):
     """
     Add a new certificate record to the database.
     
@@ -203,7 +213,7 @@ def add_certificate(current_institution_id):
                 """INSERT INTO certificates 
                    (institution_id, student_name, roll_number, course_name, grade, issue_date, certificate_hash, blockchain_tx_hash) 
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                (current_institution_id, student_name, roll_number, course_name, grade, issue_date, certificate_hash, blockchain_tx_hash)
+                (user_id, student_name, roll_number, course_name, grade, issue_date, certificate_hash, blockchain_tx_hash)
             )
             
             # Commit the transaction
@@ -241,11 +251,12 @@ def add_certificate(current_institution_id):
 
 
 @cert_bp.route('/api/verify', methods=['POST'])
-def verify_certificate():
+@token_required(allowed_user_types=['verifier'])
+def verify_certificate(user_id, user_type):
     """
     Verify a certificate by uploading an image file.
     
-    This public endpoint allows anyone to upload a certificate image for verification.
+    This endpoint allows authenticated verifiers to upload a certificate image for verification.
     It validates the file type, saves it temporarily, and processes it for verification.
     
     Expected Input:
@@ -415,8 +426,8 @@ def verify_certificate():
 
 
 @cert_bp.route('/api/certificate/list', methods=['GET'])
-@token_required
-def list_certificates(current_institution_id):
+@token_required(allowed_user_types=['institution'])
+def list_certificates(user_id, user_type):
     """
     List all certificates issued by the authenticated institution.
     
@@ -457,7 +468,7 @@ def list_certificates(current_institution_id):
             # Get total count of certificates for this institution
             cursor.execute(
                 "SELECT COUNT(*) FROM certificates WHERE institution_id = %s",
-                (current_institution_id,)
+                (user_id,)
             )
             total_count = cursor.fetchone()[0]
             
@@ -469,7 +480,7 @@ def list_certificates(current_institution_id):
                    WHERE institution_id = %s 
                    ORDER BY created_at DESC 
                    LIMIT %s OFFSET %s""",
-                (current_institution_id, limit, offset)
+                (user_id, limit, offset)
             )
             
             certificates = cursor.fetchall()

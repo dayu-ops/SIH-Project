@@ -53,6 +53,7 @@ export const addCertificate = (data) => apiClient.post('/certificate/add', data)
 export const registerVerifier = (data) => apiClient.post('/verifier/register', data);
 export const loginVerifier = (data) => apiClient.post('/verifier/login', data);
 
+// Default export for backward compatibility
 export default {
   verifyCertificate,
   registerInstitution,

@@ -2,8 +2,11 @@ import React, { useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Navbar from '../components/Navbar';
 import { verifyCertificate } from '../apiService';
+import { useAuth } from '../context/AuthContext';
+import AuthForms from '../components/AuthForms';
 
 const VerifierPage = () => {
+  const { auth } = useAuth();
   const [file, setFile] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationResult, setVerificationResult] = useState(null);
@@ -69,14 +72,17 @@ const VerifierPage = () => {
       
       <div className="pt-20 pb-12 px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-12">
-            <h1 className="text-3xl md:text-4xl font-heading font-bold text-dark mb-4">
-              Verify Your Academic Certificate
-            </h1>
-            <p className="text-xl text-gray-600">
-              Upload your certificate for instant, secure verification using AI and Blockchain
-            </p>
-          </div>
+          {auth.token && auth.userType === 'verifier' ? (
+            // Authenticated verifier - show verification tool
+            <div>
+              <div className="text-center mb-12">
+                <h1 className="text-3xl md:text-4xl font-heading font-bold text-dark mb-4">
+                  Verify Academic Certificate
+                </h1>
+                <p className="text-xl text-gray-600">
+                  Upload a certificate for instant, secure verification using AI and Blockchain
+                </p>
+              </div>
 
           <div className="card">
             {!verificationResult ? (
@@ -262,6 +268,21 @@ const VerifierPage = () => {
               </div>
             )}
           </div>
+            </div>
+          ) : (
+            // Not authenticated - show login gate
+            <div>
+              <div className="text-center mb-8">
+                <h1 className="text-3xl font-heading font-bold text-dark mb-4">
+                  Verifier Access Required
+                </h1>
+                <p className="text-xl text-gray-600">
+                  Please log in or register as a verifier to access this feature.
+                </p>
+              </div>
+              <AuthForms userType="verifier" />
+            </div>
+          )}
         </div>
       </div>
     </div>

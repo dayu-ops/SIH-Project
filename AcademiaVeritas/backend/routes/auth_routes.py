@@ -1,8 +1,26 @@
-from flask import redirect, url_for, session
+"""
+Authentication routes module for AcademiaVeritas project.
+
+This module provides secure authentication endpoints for educational institutions and verifiers,
+including registration and login functionality with JWT token management.
+"""
+
+import os
+import jwt
+import datetime
+import psycopg2
+from flask import Blueprint, request, jsonify, redirect, url_for
 from flask_dance.contrib.google import make_google_blueprint, google
+from utils.database import get_db_connection
+from utils.hashing import hash_password, check_password
+
+# Load SECRET_KEY from environment variables for JWT signing
+SECRET_KEY = os.getenv('SECRET_KEY')
+
+# Initialize the authentication blueprint
+auth_bp = Blueprint('auth', __name__)
 
 # Google OAuth setup
-import os
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
 GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
 
@@ -15,6 +33,7 @@ google_bp_institution = make_google_blueprint(
     reprompt_consent=True,
     redirect_to=None
 )
+
 # Verifier Google OAuth blueprint
 google_bp_verifier = make_google_blueprint(
     client_id=GOOGLE_CLIENT_ID,
@@ -26,212 +45,8 @@ google_bp_verifier = make_google_blueprint(
     name="google_verifier"
 )
 
-# Register blueprints in your app factory or main app file (not here)
 
-@auth_bp.route('/api/institution/google')
-def google_login_institution():
-    return redirect(url_for('google.login'))
-
-@auth_bp.route('/api/institution/google/callback')
-def google_callback_institution():
-    if not google.authorized:
-        return redirect(url_for('google.login'))
-    resp = google.get("/oauth2/v2/userinfo")
-    user_info = resp.json()
-    email = user_info["email"]
-    name = user_info.get("name", "Google User")
-    connection = get_db_connection()
-    if not connection:
-        return jsonify({"error": "Database connection failed"}), 500
-    try:
-        cursor = connection.cursor()
-        cursor.execute("SELECT id FROM institutions WHERE email = %s", (email,))
-        row = cursor.fetchone()
-        if row:
-            institution_id = row[0]
-        else:
-            cursor.execute("INSERT INTO institutions (name, email, password_hash) VALUES (%s, %s, %s) RETURNING id", (name, email, ''),)
-            institution_id = cursor.fetchone()[0]
-            connection.commit()
-        payload = {
-            'institution_id': institution_id,
-            'email': email,
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24),
-            'iat': datetime.datetime.utcnow()
-        }
-        token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
-    # Redirect to frontend with token in URL
-    frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-    redirect_url = f"{frontend_url}/google-auth?token={token}"
-    return redirect(redirect_url)
-    except Exception as e:
-        print(f"Error in Google institution callback: {e}")
-        return jsonify({"error": "An unexpected error occurred"}), 500
-    finally:
-        if connection:
-            connection.close()
-
-@auth_bp.route('/api/verifier/google')
-def google_login_verifier():
-    return redirect(url_for('google_verifier.login'))
-
-@auth_bp.route('/api/verifier/google/callback')
-def google_callback_verifier():
-    if not google_bp_verifier.session.authorized:
-        return redirect(url_for('google_verifier.login'))
-    resp = google_bp_verifier.session.get("/oauth2/v2/userinfo")
-    user_info = resp.json()
-    email = user_info["email"]
-    name = user_info.get("name", "Google User")
-    connection = get_db_connection()
-    if not connection:
-        return jsonify({"error": "Database connection failed"}), 500
-    try:
-        cursor = connection.cursor()
-        cursor.execute("SELECT id FROM verifiers WHERE email = %s", (email,))
-        row = cursor.fetchone()
-        if row:
-            verifier_id = row[0]
-        else:
-            cursor.execute("INSERT INTO verifiers (name, email, password_hash) VALUES (%s, %s, %s) RETURNING id", (name, email, ''),)
-            verifier_id = cursor.fetchone()[0]
-            connection.commit()
-        payload = {
-            'verifier_id': verifier_id,
-            'email': email,
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24),
-            'iat': datetime.datetime.utcnow()
-        }
-        token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
-    # Redirect to frontend with token in URL
-    frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-    redirect_url = f"{frontend_url}/google-auth?token={token}"
-    return redirect(redirect_url)
-    except Exception as e:
-        print(f"Error in Google verifier callback: {e}")
-        return jsonify({"error": "An unexpected error occurred"}), 500
-    finally:
-        if connection:
-            connection.close()
-# --- Verifier Registration ---
-@auth_bp.route('/api/verifier/register', methods=['POST'])
-def register_verifier():
-    """
-    Register a new verifier.
-    This endpoint allows verifiers to create new accounts in the system.
-    """
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-        name = data.get('name')
-        email = data.get('email')
-        password = data.get('password')
-        if not name or not email or not password:
-            return jsonify({"error": "Missing required fields. Please provide name, email, and password."}), 400
-        if '@' not in email or '.' not in email:
-            return jsonify({"error": "Invalid email format"}), 400
-        if len(password) < 6:
-            return jsonify({"error": "Password must be at least 6 characters long"}), 400
-        connection = get_db_connection()
-        if not connection:
-            return jsonify({"error": "Database connection failed"}), 500
-        try:
-            cursor = connection.cursor()
-            cursor.execute("SELECT id FROM verifiers WHERE email = %s", (email,))
-            if cursor.fetchone():
-                return jsonify({"error": "Email already registered"}), 409
-            password_hash = hash_password(password)
-            cursor.execute("INSERT INTO verifiers (name, email, password_hash) VALUES (%s, %s, %s)", (name, email, password_hash))
-            connection.commit()
-            return jsonify({"message": "Verifier registered successfully"}), 201
-        except psycopg2.Error as e:
-            connection.rollback()
-            print(f"Database error during verifier registration: {e}")
-            return jsonify({"error": "Database error occurred during registration"}), 500
-        finally:
-            if connection:
-                connection.close()
-    except Exception as e:
-        print(f"Unexpected error during verifier registration: {e}")
-        return jsonify({"error": "An unexpected error occurred"}), 500
-
-# --- Verifier Login ---
-@auth_bp.route('/api/verifier/login', methods=['POST'])
-def login_verifier():
-    """
-    Authenticate a verifier and return a JWT token.
-    This endpoint validates verifier credentials and returns a JWT token for authenticated sessions.
-    """
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-        email = data.get('email')
-        password = data.get('password')
-        if not email or not password:
-            return jsonify({"error": "Missing required fields. Please provide email and password."}), 400
-        if not SECRET_KEY:
-            print("Error: SECRET_KEY environment variable is not set")
-            return jsonify({"error": "Server configuration error"}), 500
-        connection = get_db_connection()
-        if not connection:
-            return jsonify({"error": "Database connection failed"}), 500
-        try:
-            cursor = connection.cursor()
-            cursor.execute("SELECT id, password_hash FROM verifiers WHERE email = %s", (email,))
-            verifier_data = cursor.fetchone()
-            if not verifier_data:
-                return jsonify({"error": "Invalid credentials"}), 401
-            verifier_id, stored_password_hash = verifier_data
-            if not check_password(stored_password_hash, password):
-                return jsonify({"error": "Invalid credentials"}), 401
-            payload = {
-                'verifier_id': verifier_id,
-                'email': email,
-                'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24),
-                'iat': datetime.datetime.utcnow()
-            }
-            token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
-            return jsonify({
-                "token": token,
-                "message": "Login successful",
-                "verifier_id": verifier_id
-            }), 200
-        except psycopg2.Error as e:
-            print(f"Database error during verifier login: {e}")
-            return jsonify({"error": "Database error occurred during login"}), 500
-        finally:
-            if connection:
-                connection.close()
-    except jwt.InvalidTokenError as e:
-        print(f"JWT error during verifier login: {e}")
-        return jsonify({"error": "Token generation failed"}), 500
-    except Exception as e:
-        print(f"Unexpected error during verifier login: {e}")
-        return jsonify({"error": "An unexpected error occurred"}), 500
-"""
-Authentication routes module for AcademiaVeritas project.
-
-This module provides secure authentication endpoints for educational institutions,
-including registration and login functionality with JWT token management.
-"""
-
-import os
-import jwt
-import datetime
-import psycopg2
-from flask import Blueprint, request, jsonify
-from utils.database import get_db_connection
-from utils.hashing import hash_password, check_password
-
-# Load SECRET_KEY from environment variables for JWT signing
-SECRET_KEY = os.getenv('SECRET_KEY')
-
-# Initialize the authentication blueprint
-auth_bp = Blueprint('auth', __name__)
-
-
+# --- Institution Registration ---
 @auth_bp.route('/api/institution/register', methods=['POST'])
 def register_institution():
     """
@@ -338,6 +153,7 @@ def register_institution():
         }), 500
 
 
+# --- Institution Login ---
 @auth_bp.route('/api/institution/login', methods=['POST'])
 def login_institution():
     """
@@ -412,9 +228,10 @@ def login_institution():
                     "error": "Invalid credentials"
                 }), 401
             
-            # Create JWT payload with institution ID and expiration time
+            # Create JWT payload with institution ID, user type, and expiration time
             payload = {
-                'institution_id': institution_id,
+                'user_id': institution_id,
+                'user_type': 'institution',
                 'email': email,
                 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24),
                 'iat': datetime.datetime.utcnow()
@@ -453,7 +270,199 @@ def login_institution():
         }), 500
 
 
-@auth_bp.route('/api/institution/verify-token', methods=['POST'])
+# --- Verifier Registration ---
+@auth_bp.route('/api/verifier/register', methods=['POST'])
+def register_verifier():
+    """
+    Register a new verifier.
+    This endpoint allows verifiers to create new accounts in the system.
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        name = data.get('name')
+        email = data.get('email')
+        password = data.get('password')
+        if not name or not email or not password:
+            return jsonify({"error": "Missing required fields. Please provide name, email, and password."}), 400
+        if '@' not in email or '.' not in email:
+            return jsonify({"error": "Invalid email format"}), 400
+        if len(password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters long"}), 400
+        connection = get_db_connection()
+        if not connection:
+            return jsonify({"error": "Database connection failed"}), 500
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT id FROM verifiers WHERE email = %s", (email,))
+            if cursor.fetchone():
+                return jsonify({"error": "Email already registered"}), 409
+            password_hash = hash_password(password)
+            cursor.execute("INSERT INTO verifiers (name, email, password_hash) VALUES (%s, %s, %s)", (name, email, password_hash))
+            connection.commit()
+            return jsonify({"message": "Verifier registered successfully"}), 201
+        except psycopg2.Error as e:
+            connection.rollback()
+            print(f"Database error during verifier registration: {e}")
+            return jsonify({"error": "Database error occurred during registration"}), 500
+        finally:
+            if connection:
+                connection.close()
+    except Exception as e:
+        print(f"Unexpected error during verifier registration: {e}")
+        return jsonify({"error": "An unexpected error occurred"}), 500
+
+
+# --- Verifier Login ---
+@auth_bp.route('/api/verifier/login', methods=['POST'])
+def login_verifier():
+    """
+    Authenticate a verifier and return a JWT token.
+    This endpoint validates verifier credentials and returns a JWT token for authenticated sessions.
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        email = data.get('email')
+        password = data.get('password')
+        if not email or not password:
+            return jsonify({"error": "Missing required fields. Please provide email and password."}), 400
+        if not SECRET_KEY:
+            print("Error: SECRET_KEY environment variable is not set")
+            return jsonify({"error": "Server configuration error"}), 500
+        connection = get_db_connection()
+        if not connection:
+            return jsonify({"error": "Database connection failed"}), 500
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT id, password_hash FROM verifiers WHERE email = %s", (email,))
+            verifier_data = cursor.fetchone()
+            if not verifier_data:
+                return jsonify({"error": "Invalid credentials"}), 401
+            verifier_id, stored_password_hash = verifier_data
+            if not check_password(stored_password_hash, password):
+                return jsonify({"error": "Invalid credentials"}), 401
+            payload = {
+                'user_id': verifier_id,
+                'user_type': 'verifier',
+                'email': email,
+                'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24),
+                'iat': datetime.datetime.utcnow()
+            }
+            token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+            return jsonify({
+                "token": token,
+                "message": "Login successful",
+                "verifier_id": verifier_id
+            }), 200
+        except psycopg2.Error as e:
+            print(f"Database error during verifier login: {e}")
+            return jsonify({"error": "Database error occurred during login"}), 500
+        finally:
+            if connection:
+                connection.close()
+    except jwt.InvalidTokenError as e:
+        print(f"JWT error during verifier login: {e}")
+        return jsonify({"error": "Token generation failed"}), 500
+    except Exception as e:
+        print(f"Unexpected error during verifier login: {e}")
+        return jsonify({"error": "An unexpected error occurred"}), 500
+
+
+# --- Google OAuth Routes ---
+@auth_bp.route('/api/institution/google')
+def google_login_institution():
+    return redirect(url_for('google.login'))
+
+@auth_bp.route('/api/institution/google/callback')
+def google_callback_institution():
+    if not google.authorized:
+        return redirect(url_for('google.login'))
+    resp = google.get("/oauth2/v2/userinfo")
+    user_info = resp.json()
+    email = user_info["email"]
+    name = user_info.get("name", "Google User")
+    connection = get_db_connection()
+    if not connection:
+        return jsonify({"error": "Database connection failed"}), 500
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT id FROM institutions WHERE email = %s", (email,))
+        row = cursor.fetchone()
+        if row:
+            institution_id = row[0]
+        else:
+            cursor.execute("INSERT INTO institutions (name, email, password_hash) VALUES (%s, %s, %s) RETURNING id", (name, email, ''),)
+            institution_id = cursor.fetchone()[0]
+            connection.commit()
+        payload = {
+            'user_id': institution_id,
+            'user_type': 'institution',
+            'email': email,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24),
+            'iat': datetime.datetime.utcnow()
+        }
+        token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+        # Redirect to frontend with token in URL
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+        redirect_url = f"{frontend_url}/google-auth?token={token}"
+        return redirect(redirect_url)
+    except Exception as e:
+        print(f"Error in Google institution callback: {e}")
+        return jsonify({"error": "An unexpected error occurred"}), 500
+    finally:
+        if connection:
+            connection.close()
+
+@auth_bp.route('/api/verifier/google')
+def google_login_verifier():
+    return redirect(url_for('google_verifier.login'))
+
+@auth_bp.route('/api/verifier/google/callback')
+def google_callback_verifier():
+    if not google_bp_verifier.session.authorized:
+        return redirect(url_for('google_verifier.login'))
+    resp = google_bp_verifier.session.get("/oauth2/v2/userinfo")
+    user_info = resp.json()
+    email = user_info["email"]
+    name = user_info.get("name", "Google User")
+    connection = get_db_connection()
+    if not connection:
+        return jsonify({"error": "Database connection failed"}), 500
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT id FROM verifiers WHERE email = %s", (email,))
+        row = cursor.fetchone()
+        if row:
+            verifier_id = row[0]
+        else:
+            cursor.execute("INSERT INTO verifiers (name, email, password_hash) VALUES (%s, %s, %s) RETURNING id", (name, email, ''),)
+            verifier_id = cursor.fetchone()[0]
+            connection.commit()
+        payload = {
+            'user_id': verifier_id,
+            'user_type': 'verifier',
+            'email': email,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24),
+            'iat': datetime.datetime.utcnow()
+        }
+        token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+        # Redirect to frontend with token in URL
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+        redirect_url = f"{frontend_url}/google-auth?token={token}"
+        return redirect(redirect_url)
+    except Exception as e:
+        print(f"Error in Google verifier callback: {e}")
+        return jsonify({"error": "An unexpected error occurred"}), 500
+    finally:
+        if connection:
+            connection.close()
+
+
+# --- Token Verification ---
+@auth_bp.route('/api/verify-token', methods=['POST'])
 def verify_token():
     """
     Verify the validity of a JWT token.
@@ -467,7 +476,7 @@ def verify_token():
         }
     
     Returns:
-        JSON response with token validity status and institution information.
+        JSON response with token validity status and user information.
     """
     try:
         data = request.get_json()
@@ -489,7 +498,8 @@ def verify_token():
             
             return jsonify({
                 "valid": True,
-                "institution_id": payload.get('institution_id'),
+                "user_id": payload.get('user_id'),
+                "user_type": payload.get('user_type'),
                 "email": payload.get('email'),
                 "expires_at": payload.get('exp')
             }), 200
